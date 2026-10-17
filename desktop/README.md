@@ -7,3 +7,7 @@
 - Variável `PROJECT_CLUB_SCREEN_AUDIO=loopback|nochrome|off` força o modo.
 
 O passo a passo do lado da página está em [`../docs/api.md`](../docs/api.md), seção "Desktop: áudio da tela".
+
+## Apertar-pra-falar global
+
+`globalPtt.js` usa [`uiohook-napi`](https://github.com/SnosMe/uiohook-napi) (MIT; inclui libuiohook LGPL, sem modificação) para ouvir a tecla do PTT com o app sem foco. Carrega só durante a chamada com PTT ligado; sem o binário, o PTT segue funcionando com a janela em foco.

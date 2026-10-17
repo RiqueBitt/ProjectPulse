@@ -31,6 +31,39 @@ o Project Club (backend) continua dono das contas, salas e permissões; este ser
    Gere os segredos com `openssl rand -hex 32` (um pra `MEDIA_SERVER_SECRET`, outro pra `TURN_SECRET`).
 4. **Subir**: `docker compose up -d --build` — e conferir: `curl https://media.seudominio.com/health`
 
+## TURN na porta 443 (opcional — `TURN_443=1`)
+
+Redes que só deixam passar a 443 (empresa, escola, hotel) bloqueiam 3478/5349. Com esse modo o Caddy
+olha o **SNI** do TLS na 443 **antes** de decifrar (módulo [caddy-l4](https://github.com/mholt/caddy-l4),
+Apache-2.0, imagem própria em `caddy-l4/Dockerfile` via `xcaddy` — Caddy 2.11.4 + caddy-l4 v0.1.2):
+
+- SNI = `TURN_DOMAIN` (ex.: `turn-SEU-IP.sslip.io`) → TLS repassado intacto pro coturn (`127.0.0.1:5349`);
+- qualquer outro → HTTPS de sempre (sinalização `wss://`), com o IP real do cliente.
+
+Arquivos: `docker-compose.turn443.yml` (override: troca a imagem do Caddy e monta `Caddyfile.turn443`,
+que importa o `Caddyfile` normal) — só vale com `COMPOSE_FILE=docker-compose.yml:docker-compose.turn443.yml`
+e `TURN_DOMAIN=…` no `.env`. Sem isso nada muda.
+
+**Domínio do TURN**: precisa de um nome próprio apontando pro mesmo IP (o SNI é o que separa).
+Com sslip.io não precisa criar nada: `turn-SEU-IP.sslip.io` já resolve pra `SEU_IP_PUBLICO`.
+Em domínio próprio: DNS A `turn.seudominio.com` → IP da VM. O Caddy emite o certificado desse nome
+por **HTTP-01** (porta 80 aberta; TLS-ALPN fica desligado pra ele) e o `pc-turn-cert-sync` copia esse
+certificado pro coturn (que passa a usá-lo também na 5349).
+
+**Ligar na VM** (o script faz tudo: `.env`, build da imagem, certificado, teste do handshake):
+```bash
+sudo BRANCH=main TURN_443=1 DOMAIN=SEU-IP.sslip.io PUBLIC_IP=SEU_IP_PUBLICO bash scripts/vm-voz-robusta.sh
+```
+Depois, no painel da staff (Sistema → Servidor de voz), `TURN_URLS`:
+`turn:SEU-IP.sslip.io:3478?transport=udp,turn:SEU-IP.sslip.io:3478?transport=tcp,turns:turn-SEU-IP.sslip.io:443?transport=tcp,turns:turn-SEU-IP.sslip.io:5349?transport=tcp`
+(o `turns:` precisa usar o `TURN_DOMAIN`: o certificado do coturn passa a ser o dele).
+Teste: `openssl s_client -connect SEU_IP_PUBLICO:443 -servername turn-SEU-IP.sslip.io` mostra o
+certificado do TURN; o trickle-ice com `turns:turn-SEU-IP.sslip.io:443?transport=tcp` dá candidato `relay`.
+
+**Desligar**: `sudo TURN_443=0 … bash scripts/vm-voz-robusta.sh` (tira `COMPOSE_FILE`/`TURN_DOMAIN` do `.env`
+e volta o Caddy oficial). Observações: o coturn vê as conexões da 443 vindo de `127.0.0.1` (as cotas são
+por usuário, então seguem valendo); ao ligar/desligar o Caddy é recriado (as chamadas reconectam sozinhas).
+
 ## Ligando no Project Club (variáveis de ambiente do app na Square Cloud)
 
 | Variável | Valor |
@@ -41,9 +74,9 @@ o Project Club (backend) continua dono das contas, salas e permissões; este ser
 | `TURN_SECRET` | o mesmo `TURN_SECRET` do `.env` |
 | `STUN_URLS` *(opcional)* | `stun:media.seudominio.com:3478` |
 
-Com `MEDIA_SERVER_URL` + `MEDIA_SERVER_SECRET` definidos, o provedor **"Project Club (próprio)"** aparece no painel
-*Sistema → Provedores de voz* como **ativo** (ele é o primeiro da cadeia e é ilimitado). Sem eles, aparece
-"não configurado" e a cadeia segue para as reservas: LiveKit (se configurado) → Jitsi.
+Com `MEDIA_SERVER_URL` + `MEDIA_SERVER_SECRET` definidos, o painel *Sistema → Servidor de voz* mostra
+**configurado**. É o ÚNICO servidor de voz da plataforma (não existe mais cadeia de provedores de reserva):
+sem essas variáveis não há voz — `/api/voice/join` responde `503` (`code: "voice-unavailable"`).
 
 ## Como funciona
 
@@ -73,9 +106,8 @@ Com `MEDIA_SERVER_URL` + `MEDIA_SERVER_SECRET` definidos, o provedor **"Project 
   e um worker novo sobe no lugar — o processo NÃO cai. Só se morrerem mais de 5 em 1 minuto o processo sai e o docker reinicia.
 - **Mesma pessoa em 2 aparelhos**: o mais novo fica; a sessão antiga é recusada (`4409`) se tentar voltar com o mesmo token
   e, se os dois ficarem trocando de lugar (>3 trocas/min), a troca é bloqueada por 30s — acaba o "saiu/entrou" em loop.
-- **Saúde no Project Club**: o backend testa `GET /health` a cada 30s; 2 falhas seguidas tiram o servidor próprio da cadeia
-  até ele voltar, e falhas reportadas por 2+ pessoas em 5 min desarmam qualquer provedor por 10 min (dobra a cada queda;
-  ver `server/src/services/voiceHealth.js`).
+- **Falha no cliente**: quando a mídia cai e não volta sozinha, o cliente refaz a conexão com credencial nova no mesmo
+  canal (sem tirar a pessoa da sala) e avisa `POST /api/voice/report` — só telemetria (vai pro log do backend).
 - Códigos de fechamento da sinalização: `4401` token (detalhe `expired`/`invalid`), `4409` substituído (não reconectar),
   `4429` muitas conexões, `4503` sala cheia/indisponível, `1012` reiniciando (reconectar), `1008` flood.
 - Dimensionamento: ~50 kbps por áudio, 300–1500 kbps por vídeo/tela **por ouvinte**. 10 pessoas em áudio ≈ 4,5 Mbps de saída.

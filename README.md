@@ -77,7 +77,7 @@ Ele nasceu dentro do Project Club para substituir provedores pagos (Agora, GetSt
 | `media-server/` | SFU mediasoup, sinalização WebSocket, API de controle, estatísticas, Docker Compose com coturn + Caddy (HTTPS automático) |
 | `sdk/web/` | Motor do cliente para navegador e Electron: microfone, portão/PTT, tela, reconexão, reprodução com auto-cura |
 | `sdk/android/` | Motor nativo Kotlin sobre `libmediasoup-android`, roteamento de áudio, foco de áudio, troca de rede |
-| `desktop/` | Integrações Electron: áudio do sistema sem eco (Windows) e PipeWire/venmic (Linux) |
+| `desktop/` | Integrações Electron: áudio do sistema sem eco (Windows), PipeWire/venmic (Linux) e apertar-pra-falar global (`globalPtt.js`) |
 | `docs/` | Protocolo de sinalização, formato do token, API de controle, guia de deploy |
 
 > **Status:** código extraído do Project Club, onde roda em produção. O SDK Android é o motor de referência (depende de `libmediasoup-android` e da sua camada de app).
@@ -108,6 +108,10 @@ const token = jwt.sign(
 );
 ```
 
+## 🌎 Dica: hospede perto dos usuários
+
+O ping é quase todo distância. No Project Club, o mesmo servidor caiu de **~134 ms** (VPS nos EUA) para **~13 ms** (VPS em São Paulo) para usuários brasileiros. Escolha a região do seu público.
+
 ## 🧩 Usando no cliente (web)
 
 ```js
@@ -133,7 +137,7 @@ await pulse.setDeafened(true);                                      // pausa o �
 pulse.dispose();
 ```
 
-Arquivos do SDK web (`sdk/web/src/`): `mediasoupEngine.js` (motor), `micPipeline.js` + `micGate.js` (portão / PTT / sensibilidade), `noiseSuppressor.js` (RNNoise — copie `sdk/web/public/rnnoise/` para a raiz pública do seu site), `audioPlayback.js` + `playbackPlan.js` (reprodução com auto-cura e volume até 200%), `screenPresets.js`, `resilience.js`. Para React: `sdk/web/react/useVideoViewport.js`.
+Arquivos do SDK web (`sdk/web/src/`): `mediasoupEngine.js` (motor), `micPipeline.js` + `micGate.js` (portão / PTT / sensibilidade), `noiseSuppressor.js` + `noiseModels.js` (RNNoise; DeepFilterNet opcional por flag — copie `sdk/web/public/rnnoise/` para a raiz pública do seu site), `audioPlayback.js` + `playbackPlan.js` (reprodução com auto-cura e volume até 200%), `screenPresets.js`, `resilience.js`, `joinResponse.js` (lê a resposta de entrada do seu backend). Para React: `sdk/web/react/useVideoViewport.js`.
 
 A referência completa da API fica em [`docs/api.md`](docs/api.md).
 
@@ -146,8 +150,10 @@ A referência completa da API fica em [`docs/api.md`](docs/api.md).
 - [x] Áudio da tela sem eco (Windows) e PipeWire (Linux)
 - [ ] Publicar `sdk/web` no npm
 - [ ] Áudio interno na transmissão de tela do Android
-- [ ] Supressão de ruído DeepFilterNet (opcional, alta qualidade)
-- [ ] TURN na porta 443 via Caddy L4
+- [ ] Supressão de ruído DeepFilterNet (estrutura pronta, atrás de flag)
+- [x] TURN na porta 443 via Caddy L4 (opcional, `TURN_443=1`)
+- [x] Canal AFK, moderação e apertar-pra-falar global no Electron
+- [x] Ping e perda medidos pelo par ICE em uso (sem falso "sinal vermelho")
 
 ## 🤝 Contribuindo
 

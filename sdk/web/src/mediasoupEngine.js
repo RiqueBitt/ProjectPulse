@@ -1,5 +1,5 @@
 // Engine do servidor de mídia PRÓPRIO do Project Club (media-server/,
-// mediasoup). Mesma "interface" do LiveKitEngine, então encaixa na MESMA
+// mediasoup) — o único engine de mídia da voz. Encaixa na
 // grade/AudioSink do VoiceContext: entrega faixas por participante, e a
 // identidade na sala é o nosso userId (o servidor assina o JWT com
 // sub = userId, ver services/voiceTokens.js mintProjectClub).
@@ -95,6 +95,7 @@
 //   onTelemetry({ type, ... }), onError(err, info)
 // API nova documentada em docs/voz-discord-api.md.
 import { createMicPipeline } from './micPipeline.js';
+import { NOISE_MODELS } from './noiseModels.js';
 import { createMicGate, createSpeakingDetector, createThrottle, dbToLevel, GATE_DEFAULTS } from './micGate.js';
 import {
   classifyClose, iceAction, importWithRetry, browserGuardedReload, micErrorReason, diffPeers, mediaErrorInfo,
@@ -219,6 +220,8 @@ export class MediasoupEngine {
     this.rawMic = null; // faixa crua do mic
     this.pipeline = null; // pipeline único do mic (micPipeline.js)
     this.noiseEnabled = false;
+    // Modelo do redutor: 'rnnoise' (padrão) | 'dfn3' (alta qualidade, flag).
+    this.noiseModel = NOISE_MODELS.RNNOISE;
     this.inputGain = 1;
     this.gate = createMicGate();
     this.speakingDet = createSpeakingDetector();
@@ -458,7 +461,7 @@ export class MediasoupEngine {
   }
 
   // ---------- entrar ----------
-  async join({ url, token, userId, iceServers = [], startMuted = false, startDeafened = false, noiseSuppression = false, micDeviceId = null, refreshCredentials = null } = {}) {
+  async join({ url, token, userId, iceServers = [], startMuted = false, startDeafened = false, noiseSuppression = false, noiseModel = NOISE_MODELS.RNNOISE, micDeviceId = null, refreshCredentials = null } = {}) {
     await loadMediasoup();
     if (this.disposed) return;
     if (!url || !token) throw new Error('credenciais do servidor de mídia ausentes');
@@ -470,6 +473,7 @@ export class MediasoupEngine {
     this.deafened = !!startDeafened;
     this.micDeviceId = micDeviceId || null;
     this.noiseEnabled = !!noiseSuppression;
+    this.noiseModel = noiseModel === NOISE_MODELS.DFN3 ? NOISE_MODELS.DFN3 : NOISE_MODELS.RNNOISE;
     this._startNetWatch();
 
     try {
@@ -1000,6 +1004,9 @@ export class MediasoupEngine {
     let pipe = null;
     pipe = await createMicPipeline(raw, {
       noise: this.noiseEnabled,
+      noiseModel: this.noiseModel,
+      // Alta qualidade falhou/lenta → já voltou pro RNNoise; avisa o app.
+      onNoiseFallback: (reason) => { this.cb.onTelemetry?.({ type: 'noise-fallback', reason }); },
       // AudioContext suspenso/travado (iOS, sem gesto): manda o mic cru
       // direto, pra pessoa nunca ficar muda sem saber; e volta depois.
       onBypass: (track) => this._swapMicTrack(pipe, track, 'direct'),
@@ -1778,36 +1785,66 @@ export class MediasoupEngine {
 
   // Delta de perda desde a última leitura (perda recente, não acumulada).
   _lossDelta(key, lost, received) {
-    const prev = this.statsPrev.get(key) || { lost: 0, received: 0 };
-    this.statsPrev.set(key, { lost, received });
+    const prev = this.statsPrev.get(key) || { lost: 0, received: 0, avg: 0 };
     const dl = Math.max(0, lost - prev.lost);
     const dr = Math.max(0, received - prev.received);
     const total = dl + dr;
-    return total > 0 ? dl / total : 0;
+    // Poucos pacotes (pessoa em silêncio/DTX, vídeo pausado): não dá pra
+    // medir perda direito — mantém a média anterior em vez de pular pra 20%.
+    let avg = prev.avg || 0;
+    if (total >= 25) avg = avg * 0.5 + (dl / total) * 0.5;
+    this.statsPrev.set(key, { lost, received, avg });
+    return avg;
   }
 
   async _collectStats() {
     if (this.disposed || this.reconnecting || !this.sendTransport) return;
     const quality = {};
     let rtt = null;
-    // RTT do par ICE ativo (ida e volta até o servidor de mídia).
+    // RTT do par ICE EM USO (ida e volta até o servidor de mídia).
+    // BUG CORRIGIDO ("ping/sinal vermelho com tudo bom"): pegava QUALQUER par
+    // "succeeded" — inclusive os reservas (TCP/relay pelo TURN), mais lentos —
+    // e o último da lista vencia. Agora só o par selecionado do transporte.
     try {
       const stats = await this.sendTransport.getStats();
+      let selectedId = null;
+      const pairs = new Map();
       stats.forEach((s) => {
-        if (s.type === 'candidate-pair' && (s.nominated || s.state === 'succeeded') && Number.isFinite(s.currentRoundTripTime)) {
-          rtt = Math.round(s.currentRoundTripTime * 1000);
-        }
+        if (s.type === 'transport' && s.selectedCandidatePairId) selectedId = s.selectedCandidatePairId;
+        if (s.type === 'candidate-pair') pairs.set(s.id, s);
       });
+      const pair = (selectedId && pairs.get(selectedId))
+        || [...pairs.values()].find((p) => p.selected || (p.nominated && p.state === 'succeeded'));
+      if (pair && Number.isFinite(pair.currentRoundTripTime)) rtt = Math.round(pair.currentRoundTripTime * 1000);
     } catch { /* sem stats */ }
+    // Suaviza (média móvel) pra um pico isolado não pintar tudo de vermelho.
+    if (rtt != null) { this._rttAvg = this._rttAvg == null ? rtt : Math.round(this._rttAvg * 0.6 + rtt * 0.4); rtt = this._rttAvg; }
     // Minha qualidade: perda relatada pelo servidor sobre o que EU envio.
-    let myLoss = 0;
+    // BUG CORRIGIDO: o fractionLost de um único relatório RTCP oscila muito
+    // (e com o mic em silêncio/DTX quase não há pacotes — 1 perdido em 5
+    // virava "20% de perda" = sinal vermelho). Agora: perda acumulada desde a
+    // última leitura (perdidos ÷ enviados), só conta com pacotes suficientes,
+    // e suavizada.
+    let myLoss = this._lossAvg || 0;
     const mic = this.producers.mic;
     if (mic && !mic.closed) {
       try {
         const stats = await mic.getStats();
+        let sent = null; let lost = null;
         stats.forEach((s) => {
-          if (s.type === 'remote-inbound-rtp' && Number.isFinite(s.fractionLost)) myLoss = Math.max(myLoss, s.fractionLost);
+          if (s.type === 'outbound-rtp' && Number.isFinite(s.packetsSent)) sent = (sent || 0) + s.packetsSent;
+          if (s.type === 'remote-inbound-rtp' && Number.isFinite(s.packetsLost)) lost = (lost || 0) + Math.max(0, s.packetsLost);
         });
+        if (sent != null && lost != null) {
+          const prev = this._sendLossPrev || { sent, lost };
+          const ds = sent - prev.sent; const dl = Math.max(0, lost - prev.lost);
+          this._sendLossPrev = { sent, lost };
+          if (ds >= 25) { // ~0,5 s de áudio falando; em silêncio mantém a última média
+            const cur = Math.min(1, dl / (ds + dl));
+            this._lossAvg = (this._lossAvg || 0) * 0.5 + cur * 0.5;
+          }
+          myLoss = this._lossAvg || 0;
+        }
       } catch { /* ok */ }
     }
     const connected = this.sendTransport?.connectionState === 'connected' || this.recvTransport?.connectionState === 'connected';
@@ -1875,6 +1912,15 @@ export class MediasoupEngine {
   // Liga/desliga o RNNoise na hora (carrega no pipeline se ainda não
   // estava). O supressor do NAVEGADOR faz o papel inverso: ligado quando o
   // RNNoise não está processando (nunca os dois juntos, nunca nenhum).
+  // Modelo do redutor ao vivo ('rnnoise' | 'dfn3'). Devolve o que ficou
+  // rodando (pode voltar 'rnnoise' se o DeepFilterNet3 não carregar).
+  async setNoiseModel(model) {
+    this.noiseModel = model === NOISE_MODELS.DFN3 ? NOISE_MODELS.DFN3 : NOISE_MODELS.RNNOISE;
+    const pipe = this.pipeline;
+    if (!pipe || typeof pipe.setNoiseModel !== 'function') return null;
+    try { return await pipe.setNoiseModel(this.noiseModel); } catch (err) { this.cb.onError?.(err, { where: 'setNoiseModel' }); return null; }
+  }
+
   async setNoiseSuppression(on) {
     this.noiseEnabled = !!on;
     if (!on) this.gate.clearVad();

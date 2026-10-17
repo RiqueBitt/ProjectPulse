@@ -11,3 +11,5 @@ coturn — BSD-3-Clause; Caddy — Apache-2.0; Electron — MIT
 venmic — https://github.com/Vencord/venmic — MPL-2.0 (usado sem modificações)
 Mumble (BSD-3-Clause), Galene (MIT) — referências
 Inspiração (ideias, sem código copiado): Vesktop/Equibop (GPL-3.0), Element Call, Spacebar, Revolt vortex (AGPL-3.0), Janus (GPL-3.0), eduMEET (MIT).
+
+uiohook-napi — https://github.com/SnosMe/uiohook-napi — MIT (inclui libuiohook, LGPL-3.0, sem modificações) — apertar-pra-falar global no Electron
