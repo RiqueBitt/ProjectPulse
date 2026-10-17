@@ -13,6 +13,7 @@
   <img alt="Plataformas" src="https://img.shields.io/badge/plataformas-Web%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20Android-5ff2cc?style=flat-square">
   <img alt="Node" src="https://img.shields.io/badge/node-%E2%89%A520-339933?style=flat-square&logo=node.js&logoColor=white">
   <img alt="Docker" src="https://img.shields.io/badge/deploy-Docker%20Compose-2496ED?style=flat-square&logo=docker&logoColor=white">
+  <img alt="Licença MIT" src="https://img.shields.io/badge/licen%C3%A7a-MIT-yellow?style=flat-square">
 </p>
 
 ---
@@ -146,6 +147,8 @@ Issues e pull requests são bem-vindos. Antes de abrir um PR:
 3. Não copie código de projetos GPL/AGPL para os SDKs — eles precisam continuar usáveis em apps fechados.
 
 ## 📜 Licenças e créditos
+
+O ProjectPulse é distribuído sob a **[licença MIT](LICENSE)**.
 
 O ProjectPulse se apoia no trabalho de muitos projetos open-source. A lista completa — projeto, link, licença e o que foi usado — está em [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Destaques:
 
