@@ -1,4 +1,4 @@
-THIRD-PARTY NOTICES — Project Club Voice (media-server + voice SDK)
+THIRD-PARTY NOTICES — ProjectPulse (media-server + voice SDK)
 
 mediasoup / mediasoup-client — https://github.com/versatica/mediasoup — ISC
 mediasoup-demo — https://github.com/versatica/mediasoup-demo — ISC (padrões de encodings de tela, opções de Opus, enableRtx, setPreferredLayers/setPriority/requestKeyFrame)
