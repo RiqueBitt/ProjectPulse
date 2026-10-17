@@ -80,7 +80,7 @@ Ele nasceu dentro do Project Club para substituir provedores pagos (Agora, GetSt
 | `desktop/` | Integrações Electron: áudio do sistema sem eco (Windows) e PipeWire/venmic (Linux) |
 | `docs/` | Protocolo de sinalização, formato do token, API de controle, guia de deploy |
 
-> **Status:** o código está sendo extraído do Project Club, onde já roda em produção. As pastas acima chegam aqui por etapas.
+> **Status:** código extraído do Project Club, onde roda em produção. O SDK Android é o motor de referência (depende de `libmediasoup-android` e da sua camada de app).
 
 ## 🚀 Começando (servidor)
 
@@ -108,23 +108,34 @@ const token = jwt.sign(
 );
 ```
 
-## 🧩 Usando no cliente (web) — prévia da API
+## 🧩 Usando no cliente (web)
 
 ```js
-const pulse = new PulseEngine({ url: 'wss://SEU_DOMINIO/ws', token, iceServers });
+import { MediasoupEngine } from './sdk/web/src/mediasoupEngine.js';
 
-pulse.onLocalSpeaking = (on) => ring(me, on);
-pulse.onMediaUser     = (uid, on) => updateTiles(uid, on);
+const pulse = new MediasoupEngine({
+  callbacks: {
+    onLocalSpeaking: (on) => ring(me, on),
+    onMediaUser:     (uid, on) => updateTiles(uid, on),
+    onRemoteAudio:   (uid, stream) => playVoice(uid, stream),         // use sdk/web/src/audioPlayback.js
+    onRemoteScreenAudio: (uid, stream) => playStream(uid, stream),    // volume separado da voz
+    onConnectionStats: (s) => showPing(s),
+    onLeft: (reason, info) => info?.network ? waitOnline() : showError(reason),
+  },
+});
 
-await pulse.join({ startMuted: false });
-pulse.setPushToTalk(true);
-pulse.setPttPressed(true);                            // tecla apertada
+await pulse.join({ url: 'wss://SEU_DOMINIO/ws', token, userId: me, iceServers, noiseSuppression: true });
+pulse.setPushToTalk(true, { releaseDelayMs: 200 });
+pulse.setPttPressed(true);                                          // tecla apertada
 await pulse.setScreen(true, { quality: '1080p', frameRate: 60 });
-await pulse.setScreenQuality({ quality: '720p', frameRate: 30 }); // ao vivo
-pulse.setUserVolume('uid-42', 1.5);                   // 150%
+await pulse.setScreenQuality({ quality: '720p', frameRate: 30 });   // ao vivo
+await pulse.setDeafened(true);                                      // pausa o áudio no servidor
+pulse.dispose();
 ```
 
-A referência completa da API fica em `docs/`.
+Arquivos do SDK web (`sdk/web/src/`): `mediasoupEngine.js` (motor), `micPipeline.js` + `micGate.js` (portão / PTT / sensibilidade), `noiseSuppressor.js` (RNNoise — copie `sdk/web/public/rnnoise/` para a raiz pública do seu site), `audioPlayback.js` + `playbackPlan.js` (reprodução com auto-cura e volume até 200%), `screenPresets.js`, `resilience.js`. Para React: `sdk/web/react/useVideoViewport.js`.
+
+A referência completa da API fica em [`docs/api.md`](docs/api.md).
 
 ## 🗺️ Roadmap
 
@@ -142,7 +153,7 @@ A referência completa da API fica em `docs/`.
 
 Issues e pull requests são bem-vindos. Antes de abrir um PR:
 
-1. Rode os testes do servidor (`npm test` em `media-server/`) e o teste ponta a ponta de WebRTC.
+1. Rode os testes do servidor (`npm test` em `media-server/`).
 2. Descreva o comportamento antes e depois.
 3. Não copie código de projetos GPL/AGPL para os SDKs — eles precisam continuar usáveis em apps fechados.
 

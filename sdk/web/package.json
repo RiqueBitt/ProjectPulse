@@ -1,0 +1,17 @@
+{
+  "name": "@projectpulse/web",
+  "version": "0.1.0",
+  "description": "SDK web/Electron do ProjectPulse: voz, apertar-pra-falar, RNNoise, compartilhamento de tela e reconexão sobre mediasoup.",
+  "type": "module",
+  "main": "src/mediasoupEngine.js",
+  "exports": {
+    ".": "./src/mediasoupEngine.js",
+    "./audio": "./src/audioPlayback.js",
+    "./presets": "./src/screenPresets.js",
+    "./react": "./react/useVideoViewport.js"
+  },
+  "files": ["src", "react", "public"],
+  "license": "MIT",
+  "peerDependencies": { "mediasoup-client": "^3.24.5" },
+  "peerDependenciesMeta": { "react": { "optional": true } }
+}
